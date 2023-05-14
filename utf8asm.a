@@ -62,7 +62,8 @@
 		stx .seq_length
 		dec .expected_bytes
 		bne .rts	; more to follow
-		jmp out_sequence_X	; convert and output
+		lda .byte_sequence
+		jmp out_sequence_AX	; convert and output
 
 .start_sequence_X_Y_check ; X is byte, Y is number of continuation bytes expected to follow
 		cpx #$c2	; 0xc0 and 0xc1 are illegal, because they can only
@@ -97,17 +98,22 @@ out_ascii_A ; output code points in 0x00..0x7f range
 		; 00..1f -> convert LF and CR
 		; 41..5a -> add 0x80
 		; 61..7a -> subtract 0x20
-		cmp #$41
-		bcc ._00_40
+		cmp #$40
+		bcc ._00_3f
+		beq ._40
 		cmp #$5b
 		bcc ._41_5a
+		cmp #$5e
+		beq ._5e
 		cmp #$61
 		bcc .keep
 		cmp #$7b
 		bcc ._61_7a
-.keep		jmp $ffd2
+		cmp #$7f
+		bne .unsupported
+		rts	; 7f is "ignore"
 
-._00_40		cmp #13	; CR -> ignore
+._00_3f		cmp #13	; CR -> ignore
 		bne ++
 			rts
 ++		cmp #10	; LF -> CR
@@ -115,16 +121,108 @@ out_ascii_A ; output code points in 0x00..0x7f range
 			lda #13
 ++		ldx #0
 		stx $f4	; make sure TABs are not quoted
-		jmp $ffd2
-
+		!by $2c
+.unsupported	lda #CHAR_UNSUPPORTED
+		!by $2c
+._40		lda #$b0
+		!by $2c
 ._41_5a		ora #$80
-		jmp $ffd2
-
+		!by $2c
+._5e		lda #$bf
+		!by $2c
 ._61_7a		and #$df
-		jmp $ffd2
+.keep		jmp $ffd2
 
-out_sequence_X ; output code points in 0x80..0x1fffff range, X is length of byte sequence (2/3/4)
-		;lda #CHAR_UNSUPPORTED
-		txa
+.bigtable
+;len2:
+.£§		!h ad00000040
+.´µ		!h afb1
+.Ä		!h db
+.Ö		!h dc
+.Üßàâäèéêî	!h dd0000beb200b400bb000000aeacb5000000b6
+.ôöùûü		!h b700bc0000b300b8bd
+.Σ		!h ba
+.π		!h de
+;len3:
+.↑		!h 5e
+.√		!h b9
+.─│		!h a600a1
+.┌┐└┘├		!h a8000000aa000000a2000000a4000000a5
+.┤		!h a7
+.┬		!h a9
+.┴		!h a3
+.┼		!h ab
+
+.show_len	txa	
 		ora #$30	; now we output '2', '3' or '4'
 		jmp $ffd2
+
+out_sequence_AX ; output code points in 0x80..0x1fffff range, A is first byte, X is length of byte sequence (2/3/4)
+		cpx #3
+		beq .len3
+		bcs .fail	; atm we do not support any code point with a 4-byte sequence
+;len2:
+		ldx #7;TABLE2_LENGTH - 1
+.try2			lda .byte_sequence
+			cmp .table2_1stbyte, x
+			bne .next2
+			lda .byte_sequence + 1
+			cmp .table2_min, x
+			bcc .next2
+			cmp .table2_max, x
+			bcc .ok2
+			beq .ok2
+.next2			dex
+			bpl .try2
+		; not found
+.fail		lda #CHAR_UNSUPPORTED
+		jmp $ffd2
+
+.ok2		sec
+		sbc .table2_min, x
+		clc
+		adc .table2_base, x
+		tax
+		lda .bigtable, x
+		beq .fail
+		jmp $ffd2
+
+.table2_1stbyte	!h c2c2c3c3c3c3cecf
+.table2_min	!h a3b484969cb4a380
+.table2_max	!h a7b58496aebca380
+.table2_base	!by .£§ - .bigtable, .´µ - .bigtable, .Ä - .bigtable, .Ö - .bigtable
+		!by .Üßàâäèéêî - .bigtable, .ôöùûü - .bigtable, .Σ - .bigtable, .π - .bigtable
+
+.len3		ldx #7;TABLE3_LENGTH - 1
+.try3			lda .byte_sequence
+			cmp .table3_1stbyte, x
+			bne .next3
+			lda .byte_sequence + 1
+			cmp .table3_2ndbyte, x
+			bne .next3
+			lda .byte_sequence + 2
+			cmp .table3_min, x
+			bcc .next3
+			cmp .table3_max, x
+			bcc .ok3
+			beq .ok3
+.next3			dex
+			bpl .try3
+		; not found
+		bmi .fail
+
+.ok3		sec
+		sbc .table3_min, x
+		clc
+		adc .table3_base, x
+		tax
+		lda .bigtable, x
+		beq .fail
+		jmp $ffd2
+
+.table3_1stbyte	!h e2e2e2e2e2e2e2e2
+.table3_2ndbyte	!h 8688949494949494
+.table3_min	!h 919a808ca4acb4bc
+.table3_max	!h 919a829ca4acb4bc
+.table3_base	!by .↑ - .bigtable, .√ - .bigtable, .─│ - .bigtable, .┌┐└┘├ - .bigtable
+		!by .┤ - .bigtable, .┬ - .bigtable, .┴ - .bigtable, .┼ - .bigtable
