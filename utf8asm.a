@@ -1,9 +1,13 @@
 ;ACME 0.97
 
-; welche Fehler sind denkbar?
+; UTF-8-Decoder, version 4:
+; mappings are now stored in a tree.
+
+; welche Kodierungsfehler sind denkbar?
 ;	-unerwartete Fortsetzungsbytes (zuviele bzw. ganz ohne Startbyte)
 ;	-fehlende Fortsetzungsbytes
-;	-verbotene Bytes (0xc0, 0xc1, 0xf8+)
+;	-verbotene Bytes (0xf8+)
+;	-unnötig lange Sequenzen (0xc0 XY, 0xc1 XY werden angemeckert, andere nicht)
 
 	!to "utf8asm.boot", cbm
 	!ct pet
@@ -11,6 +15,11 @@
 
 	CHAR_CODING_ERROR	= '!'	; char to output in case of encoding error
 	CHAR_UNSUPPORTED	= 'X'	; char to output for unsupported code points
+!addr	sys_chrout		= $ffd2	; routine to output a character
+
+!macro bit16 {
+	!byte $2c	; opcode of BIT $.... command
+}
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ; UTF-8 decoder
@@ -24,13 +33,13 @@
 		bpl .ascii_AX	; handle ascii value (0x00..0x7f)
 		asl
 		bpl .sixbits_X	; handle continuation byte (0x80..0xbf)
-		ldy #1	; minimal number of expected continuation bytes: 1
+		ldy #2	; write offset for byte (prefix with two $00)
 		asl
 		bpl .start_sequence_X_Y_check	; handle 0xc0..0xdf (start of two-byte sequence)
-		iny;ldy#2	minimal number of expected continuation bytes: 2
+		dey;ldy#1	write offset for byte (prefix with one $00)
 		asl
 		bpl .start_sequence_X_Y	; handle 0xe0..0xef (start of three-byte sequence)
-		iny;ldy#3	minimal number of expected continuation bytes: 3
+		dey;ldy#0	write offset for byte (no prefix bytes)
 		asl
 		bpl .start_sequence_X_Y	; handle 0xf0..0xf7 (start of four-byte sequence)
 		; definitions for five-byte and six-byte sequences have been
@@ -40,42 +49,42 @@
 		bmi .rts	; already ignoring? then keep ignoring
 		jsr .error_out
 		lda #$ff
-		!by $2c
+		+bit16
 .init		lda #0
 		sta .expected_bytes
 .rts		rts
-
-; number of continuation bytes to expect (ff/0/1/2/3, where $ff means infinity, i.e. error state)
-.expected_bytes	!by 0
-; byte sequence
-.seq_length	!by 0	; will be 2/3/4 when calling out_sequence
-.pre_seq	!by 0, 0	; always zero, can be used as base+offset
-.byte_sequence	!by 0, 0, 0, 0	; example: Euro sign would be $e2, $82, $ac, dontcare
 
 .sixbits_X ; it's a continuation byte (passed in X)
 		ldy .expected_bytes
 		bmi .rts	; ignore -> keep ignoring
 		beq .coding_error	; ok -> complain and start ignoring
 		txa	; store byte in memory
-		ldx .seq_length
-		sta .byte_sequence, x
+		ldx .write_offset_minus_1
+		sta .byte_sequence + 1, x
 		inx
-		stx .seq_length
+		stx .write_offset_minus_1
 		dec .expected_bytes
 		bne .rts	; more to follow
-		lda .byte_sequence
-		jmp out_sequence_AX	; convert and output
+		jmp out_sequence	; convert and output
 
-.start_sequence_X_Y_check ; X is byte, Y is number of continuation bytes expected to follow
+.table_expected	!by 3, 2, 1	; table to convert write offset to number of expected bytes
+
+.start_sequence_X_Y_check ; X is byte, Y is write offset in sequence
 		cpx #$c2	; 0xc0 and 0xc1 are illegal, because they can only
 		bcc .coding_error	; start code points that already fit in ascii!
-.start_sequence_X_Y ; X is byte, Y is number of continuation bytes expected to follow
-		stx .byte_sequence
-		lda #1
-		sta .seq_length
-.new_state_Y ; Y is number of continuation bytes expected to follow
+.start_sequence_X_Y ; X is byte, Y is write offset in sequence
+		txa
+		sta .byte_sequence, y
+		ldx .table_expected, y	; get number of expected bytes to follow
+		sty .write_offset_minus_1
+		lda #0	; make sure prefix bytes are cleared
+		beq ++
+--			sta .byte_sequence, y
+++			dey
+			bpl --
+.new_state_X ; X is number of continuation bytes expected to follow
 		lda .expected_bytes	; check old status
-		sty .expected_bytes	; and set new one
+		stx .expected_bytes	; and set new one
 		beq .rts	; ok -> ok
 		bmi .rts	; ignore -> ok, we start a fresh sequence anyway
 		; expecting -> show error because previous code point has not been finished
@@ -83,37 +92,38 @@
 		; but we do not enter the "ignore" state because we already have
 		; new valid data:
 .error_out	lda #CHAR_CODING_ERROR
-		jmp $ffd2
+		jmp sys_chrout
 
 ; handler for ASCII values (0x00..0x7f):
 .ascii_AX ; value is passed in both A and X
 		pha
-		ldy #0	; new state (no continuation bytes)
-		jsr .new_state_Y
+		ldx #0	; new state (no continuation bytes)
+		jsr .new_state_X
 		pla
 		;jmp out_ascii_A
 		;FALLTHROUGH
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-; converter
+; converter for ASCII values
 out_ascii_A ; output code points in 0x00..0x7f range
 		; 00..1f -> convert LF and CR
 		; 41..5a -> add 0x80
 		; 61..7a -> subtract 0x20
 		cmp #$40
-		bcc ._00_3f
-		beq ._40
+		bcc ._00_3f	; control characters, digits, punctuation
+		beq ._40	; ampersand
 		cmp #$5b
-		bcc ._41_5a
+		bcc ._41_5a	; uppercase letters
 		cmp #$5e
-		beq ._5e
+		beq ._5e	; ^
 		cmp #$61
-		bcc .keep
+		bcc .keep	; [ \ ] _
 		cmp #$7b
-		bcc ._61_7a
+		bcc ._61_7a	; lowercase letters
 		cmp #$7f
-		bne .unsupported
-		rts	; 7f is "ignore"
+		bne .unsupported	; { | } ~
+		rts	; 7f is ignored
 
+; control characters, digits, punctuation
 ._00_3f		cmp #13	; CR -> ignore
 		bne ++
 			rts
@@ -122,17 +132,115 @@ out_ascii_A ; output code points in 0x00..0x7f range
 			lda #13
 ++		ldx #0
 		stx $f4	; make sure TABs are not quoted
-		!by $2c
+		+bit16
 .unsupported	lda #CHAR_UNSUPPORTED
-		!by $2c
-._40		lda #$b0
-		!by $2c
-._41_5a		ora #$80
-		!by $2c
-._5e		lda #$bf
-		!by $2c
-._61_7a		and #$df
-.keep		jmp $ffd2
+		+bit16
+._40		lda #$b0	; ampersand
+		+bit16
+._41_5a		ora #$80	; uppercase
+		+bit16
+._5e		lda #$bf	; ^
+		+bit16
+._61_7a		and #$df	; lowercase
+.keep		jmp sys_chrout
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+; converter for code points above 0x7f:
+out_sequence ; output code points in 0x80..0x1fffff range
+		; check 1st byte
+		ldx #$fe	; pre-init
+		lda .byte_sequence
+.loop1			inx
+			inx
+			cmp .base_1st, x
+			bcc .fail
+			bne .loop1
+		lda .base_1st + 1, x
+		tax
+		; check 2nd byte
+		lda .byte_sequence + 1
+.loop2			inx
+			inx
+			cmp .base_2nd - 2, x
+			bcc .fail
+			bne .loop2
+		lda .base_2nd - 1, x
+		tax
+		; check 3rd byte
+		lda .byte_sequence + 2
+.loop3			inx
+			inx
+			cmp .base_3rd - 2, x
+			bcc .fail
+			bne .loop3
+		lda .base_3rd - 1, x
+		tax
+		; check fourth (last) byte
+		lda .byte_sequence + 3
+.loop4			inx
+			inx
+			inx
+			cmp .base_4th - 3, x	; min
+			bcc .fail
+			cmp .base_4th - 2, x	; limit (max+1)
+			bcs .loop4
+		; found!
+		sec
+		sbc .base_4th - 3, x	; subtract minimum
+		clc
+		adc .base_4th - 1, x	; add start offset in big lookup table
+		tax
+		lda .bigtable, x
+		bne .done
+.fail		lda #CHAR_UNSUPPORTED
+.done		jmp sys_chrout
+
+; CAUTION: all lists must be sorted in ascending order so search can stop early!
+
+.base_1st ; start of four-byte code points:
+		!by $00, .node_00 - .base_2nd
+		!by $ff	; end
+
+.base_2nd ; start of three-byte code points:
+.node_00	!by $00, .node_0000 - .base_3rd
+		!by $e2, .node_00e2 - .base_3rd
+		!by $ff	; end
+
+.base_3rd ; start of two-byte code points:
+.node_0000	!by $c2, .node_0000c2 - .base_4th
+		!by $c3, .node_0000c3 - .base_4th
+		!by $ce, .node_0000ce - .base_4th
+		!by $cf, .node_0000cf - .base_4th
+		!by $ff	; end
+.node_00e2	!by $86, .node_00e286 - .base_4th
+		!by $88, .node_00e288 - .base_4th
+		!by $94, .node_00e294 - .base_4th
+		!by $ff	; end
+
+.base_4th ; data for last byte of sequences (minimum value, max+1 value, offset in table)
+.node_0000c2	!by $a3, $a8, .£§ - .bigtable
+		!by $b4, $b6, .´µ - .bigtable
+		!by $ff	; end
+.node_0000c3	!by $84, $85, .Ä - .bigtable
+		!by $96, $97, .Ö - .bigtable
+		!by $9c, $af, .Üßàâäèéêî - .bigtable
+		!by $b4, $bd, .ôöùûü - .bigtable
+		!by $ff	; end
+.node_0000ce	!by $a3, $a4, .Σ - .bigtable
+		!by $ff	; end
+.node_0000cf	!by $80, $81, .π - .bigtable
+		!by $ff	; end
+.node_00e286	!by $91, $92, .↑ - .bigtable
+		!by $ff	; end
+.node_00e288	!by $9a, $9b, .√ - .bigtable
+		!by $ff	; end
+.node_00e294	!by $80, $83, .─│ - .bigtable
+		!by $8c, $9d, .┌┐└┘├ - .bigtable
+		!by $a4, $a5, .┤ - .bigtable
+		!by $ac, $ad, .┬ - .bigtable
+		!by $b4, $b5, .┴ - .bigtable
+		!by $bc, $bd, .┼ - .bigtable
+		!by $ff	; end
 
 .bigtable
 ;len2:
@@ -154,44 +262,11 @@ out_ascii_A ; output code points in 0x00..0x7f range
 .┴		!h a3
 .┼		!h ab
 
-out_sequence_AX ; output code points in 0x80..0x1fffff range, A is first byte, X is length of byte sequence (2/3/4)
-		ldy #15;TABLE2_LENGTH - 1
-.try			lda .pre_seq - 2, x
-			cmp .table_1stbyte, y
-			bne .next
-			lda .pre_seq - 1, x
-			cmp .table_2ndbyte, y
-			bne .next
-			lda .pre_seq, x
-			cmp .table_3rdbyte, y
-			bne .next
-			lda .pre_seq + 1, x
-			cmp .table_4thmin, y
-			bcc .next
-			cmp .table_4thmax, y
-			bcc .ok
-			beq .ok
-.next			dey
-			bpl .try
-		; not found
-.fail		lda #CHAR_UNSUPPORTED
-		jmp $ffd2
+; end of program, but we put variables after it:
 
-.ok		sec
-		sbc .table_4thmin, y
-		clc
-		adc .table_base, y
-		tax
-		lda .bigtable, x
-		beq .fail
-		jmp $ffd2
-
-.table_1stbyte	!h 0000000000000000	; we can save some space by re-using the table below!
-.table_2ndbyte	!h 0000000000000000e2e2e2e2e2e2e2e2
-.table_3rdbyte	!h c2c2c3c3c3c3cecf8688949494949494
-.table_4thmin	!h a3b484969cb4a380919a808ca4acb4bc
-.table_4thmax	!h a7b58496aebca380919a829ca4acb4bc
-.table_base	!by .£§ - .bigtable, .´µ - .bigtable, .Ä - .bigtable, .Ö - .bigtable
-		!by .Üßàâäèéêî - .bigtable, .ôöùûü - .bigtable, .Σ - .bigtable, .π - .bigtable
-		!by .↑ - .bigtable, .√ - .bigtable, .─│ - .bigtable, .┌┐└┘├ - .bigtable
-		!by .┤ - .bigtable, .┬ - .bigtable, .┴ - .bigtable, .┼ - .bigtable
+; number of continuation bytes to expect (ff/0/1/2/3, where $ff means infinity, i.e. error state)
+.expected_bytes
+; byte sequence
+.write_offset_minus_1	= .expected_bytes + 1
+; zero-padded on left! example: Euro sign would be $00, $e2, $82, $ac
+.byte_sequence		= .write_offset_minus_1 + 1	; four bytes!
