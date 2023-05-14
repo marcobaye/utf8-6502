@@ -1,0 +1,5 @@
+
+TODO:
+	- split into two parts:
+		- "utf-8 decoder"
+		- "data needed to convert to C128 DIN"
