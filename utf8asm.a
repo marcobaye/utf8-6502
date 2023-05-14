@@ -49,6 +49,7 @@
 .expected_bytes	!by 0
 ; byte sequence
 .seq_length	!by 0	; will be 2/3/4 when calling out_sequence
+.pre_seq	!by 0, 0	; always zero, can be used as base+offset
 .byte_sequence	!by 0, 0, 0, 0	; example: Euro sign would be $e2, $82, $ac, dontcare
 
 .sixbits_X ; it's a continuation byte (passed in X)
@@ -153,76 +154,44 @@ out_ascii_A ; output code points in 0x00..0x7f range
 .┴		!h a3
 .┼		!h ab
 
-.show_len	txa	
-		ora #$30	; now we output '2', '3' or '4'
-		jmp $ffd2
-
 out_sequence_AX ; output code points in 0x80..0x1fffff range, A is first byte, X is length of byte sequence (2/3/4)
-		cpx #3
-		beq .len3
-		bcs .fail	; atm we do not support any code point with a 4-byte sequence
-;len2:
-		ldx #7;TABLE2_LENGTH - 1
-.try2			lda .byte_sequence
-			cmp .table2_1stbyte, x
-			bne .next2
-			lda .byte_sequence + 1
-			cmp .table2_min, x
-			bcc .next2
-			cmp .table2_max, x
-			bcc .ok2
-			beq .ok2
-.next2			dex
-			bpl .try2
+		ldy #15;TABLE2_LENGTH - 1
+.try			lda .pre_seq - 2, x
+			cmp .table_1stbyte, y
+			bne .next
+			lda .pre_seq - 1, x
+			cmp .table_2ndbyte, y
+			bne .next
+			lda .pre_seq, x
+			cmp .table_3rdbyte, y
+			bne .next
+			lda .pre_seq + 1, x
+			cmp .table_4thmin, y
+			bcc .next
+			cmp .table_4thmax, y
+			bcc .ok
+			beq .ok
+.next			dey
+			bpl .try
 		; not found
 .fail		lda #CHAR_UNSUPPORTED
 		jmp $ffd2
 
-.ok2		sec
-		sbc .table2_min, x
+.ok		sec
+		sbc .table_4thmin, y
 		clc
-		adc .table2_base, x
+		adc .table_base, y
 		tax
 		lda .bigtable, x
 		beq .fail
 		jmp $ffd2
 
-.table2_1stbyte	!h c2c2c3c3c3c3cecf
-.table2_min	!h a3b484969cb4a380
-.table2_max	!h a7b58496aebca380
-.table2_base	!by .£§ - .bigtable, .´µ - .bigtable, .Ä - .bigtable, .Ö - .bigtable
+.table_1stbyte	!h 0000000000000000	; we can save some space by re-using the table below!
+.table_2ndbyte	!h 0000000000000000e2e2e2e2e2e2e2e2
+.table_3rdbyte	!h c2c2c3c3c3c3cecf8688949494949494
+.table_4thmin	!h a3b484969cb4a380919a808ca4acb4bc
+.table_4thmax	!h a7b58496aebca380919a829ca4acb4bc
+.table_base	!by .£§ - .bigtable, .´µ - .bigtable, .Ä - .bigtable, .Ö - .bigtable
 		!by .Üßàâäèéêî - .bigtable, .ôöùûü - .bigtable, .Σ - .bigtable, .π - .bigtable
-
-.len3		ldx #7;TABLE3_LENGTH - 1
-.try3			lda .byte_sequence
-			cmp .table3_1stbyte, x
-			bne .next3
-			lda .byte_sequence + 1
-			cmp .table3_2ndbyte, x
-			bne .next3
-			lda .byte_sequence + 2
-			cmp .table3_min, x
-			bcc .next3
-			cmp .table3_max, x
-			bcc .ok3
-			beq .ok3
-.next3			dex
-			bpl .try3
-		; not found
-		bmi .fail
-
-.ok3		sec
-		sbc .table3_min, x
-		clc
-		adc .table3_base, x
-		tax
-		lda .bigtable, x
-		beq .fail
-		jmp $ffd2
-
-.table3_1stbyte	!h e2e2e2e2e2e2e2e2
-.table3_2ndbyte	!h 8688949494949494
-.table3_min	!h 919a808ca4acb4bc
-.table3_max	!h 919a829ca4acb4bc
-.table3_base	!by .↑ - .bigtable, .√ - .bigtable, .─│ - .bigtable, .┌┐└┘├ - .bigtable
+		!by .↑ - .bigtable, .√ - .bigtable, .─│ - .bigtable, .┌┐└┘├ - .bigtable
 		!by .┤ - .bigtable, .┬ - .bigtable, .┴ - .bigtable, .┼ - .bigtable
