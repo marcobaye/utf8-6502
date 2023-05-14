@@ -1,6 +1,6 @@
 ;ACME 0.97
 
-; UTF-8-Decoder, version 4:
+; UTF-8-Decoder, version 5:
 ; mappings are now stored in a tree.
 
 ; welche Kodierungsfehler sind denkbar?
@@ -147,34 +147,20 @@ out_ascii_A ; output code points in 0x00..0x7f range
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ; converter for code points above 0x7f:
 out_sequence ; output code points in 0x80..0x1fffff range
-		; check 1st byte
-		ldx #$fe	; pre-init
-		lda .byte_sequence
-.loop1			inx
-			inx
-			cmp .base_1st, x
-			bcc .fail
-			bne .loop1
-		lda .base_1st + 1, x
-		tax
-		; check 2nd byte
-		lda .byte_sequence + 1
-.loop2			inx
-			inx
-			cmp .base_2nd - 2, x
-			bcc .fail
-			bne .loop2
-		lda .base_2nd - 1, x
-		tax
-		; check 3rd byte
-		lda .byte_sequence + 2
-.loop3			inx
-			inx
-			cmp .base_3rd - 2, x
-			bcc .fail
-			bne .loop3
-		lda .base_3rd - 1, x
-		tax
+		; check first three bytes
+		ldy #-3	; three iterations (find 1st/2nd/3rd byte in ordered list)
+		ldx #0	; start index
+.next_byte		lda .byte_sequence - 253, y
+.next_entry			inx
+				inx
+				cmp .lists_base - 2, x
+				bcc .fail
+				bne .next_entry
+			; entry matches
+			lda .lists_base - 1, x
+			tax
+			iny
+			bne .next_byte
 		; check fourth (last) byte
 		lda .byte_sequence + 3
 .loop4			inx
@@ -197,16 +183,15 @@ out_sequence ; output code points in 0x80..0x1fffff range
 
 ; CAUTION: all lists must be sorted in ascending order so search can stop early!
 
-.base_1st ; start of four-byte code points:
-		!by $00, .node_00 - .base_2nd
+.lists_base
+; start of four-byte code points:
+		!by $00, .node_00 - .lists_base
 		!by $ff	; end
-
-.base_2nd ; start of three-byte code points:
-.node_00	!by $00, .node_0000 - .base_3rd
-		!by $e2, .node_00e2 - .base_3rd
+; start of three-byte code points:
+.node_00	!by $00, .node_0000 - .lists_base
+		!by $e2, .node_00e2 - .lists_base
 		!by $ff	; end
-
-.base_3rd ; start of two-byte code points:
+; start of two-byte code points:
 .node_0000	!by $c2, .node_0000c2 - .base_4th
 		!by $c3, .node_0000c3 - .base_4th
 		!by $ce, .node_0000ce - .base_4th
