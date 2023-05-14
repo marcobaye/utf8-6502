@@ -9,26 +9,23 @@
 ;	-verbotene Bytes (0xf8+)
 ;	-unnötig lange Sequenzen (0xc0 XY, 0xc1 XY werden angemeckert, andere nicht)
 
-	!to "utf8asm.boot", cbm
-	!ct pet
-	* = $1300
-
-	CHAR_CODING_ERROR	= '!'	; char to output in case of encoding error
-	CHAR_UNSUPPORTED	= 'X'	; char to output for unsupported code points
-!addr	sys_chrout		= $ffd2	; routine to output a character
-
 !macro bit16 {
 	!byte $2c	; opcode of BIT $.... command
 }
 
+; caller needs to define "utf8_vars" where these six bytes are placed:
+
+; number of continuation bytes to expect (ff/0/1/2/3, where $ff means infinity, i.e. error state)
+	.expected_bytes		= utf8_vars
+; byte sequence
+	.write_offset_minus_1	= utf8_vars + 1
+; zero-padded on left! example: Euro sign would be $00, $e2, $82, $ac
+	.byte_sequence		= utf8_vars + 2	; four bytes!
+
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ; UTF-8 decoder
 
-; first entry point: init / reset / clear error flag
-		jmp .init
-; second entry point: feed a byte to decoder
-		;jmp decode_byte_A
-;decode_byte_A
+utf8_decode_byte_A
 		tax	; check msb and buffer original value so we can shift A around
 		bpl .ascii_AX	; handle ascii value (0x00..0x7f)
 		asl
@@ -50,22 +47,9 @@
 		jsr .error_out
 		lda #$ff
 		+bit16
-.init		lda #0
+utf8_init	lda #0
 		sta .expected_bytes
 .rts		rts
-
-.sixbits_X ; it's a continuation byte (passed in X)
-		ldy .expected_bytes
-		bmi .rts	; ignore -> keep ignoring
-		beq .coding_error	; ok -> complain and start ignoring
-		txa	; store byte in memory
-		ldx .write_offset_minus_1
-		sta .byte_sequence + 1, x
-		inx
-		stx .write_offset_minus_1
-		dec .expected_bytes
-		bne .rts	; more to follow
-		jmp out_sequence	; convert and output
 
 .table_expected	!by 3, 2, 1	; table to convert write offset to number of expected bytes
 
@@ -100,50 +84,21 @@
 		ldx #0	; new state (no continuation bytes)
 		jsr .new_state_X
 		pla
-		;jmp out_ascii_A
+		jmp out_ascii_A
+
+.sixbits_X ; it's a continuation byte (passed in X)
+		ldy .expected_bytes
+		bmi .rts	; ignore -> keep ignoring
+		beq .coding_error	; ok -> complain and start ignoring
+		txa	; store byte in memory
+		ldx .write_offset_minus_1
+		sta .byte_sequence + 1, x
+		inx
+		stx .write_offset_minus_1
+		dec .expected_bytes
+		bne .rts	; more to follow
+		;jmp out_sequence	; convert and output
 		;FALLTHROUGH
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-; converter for ASCII values
-out_ascii_A ; output code points in 0x00..0x7f range
-		; 00..1f -> convert LF and CR
-		; 41..5a -> add 0x80
-		; 61..7a -> subtract 0x20
-		cmp #$40
-		bcc ._00_3f	; control characters, digits, punctuation
-		beq ._40	; ampersand
-		cmp #$5b
-		bcc ._41_5a	; uppercase letters
-		cmp #$5e
-		beq ._5e	; ^
-		cmp #$61
-		bcc .keep	; [ \ ] _
-		cmp #$7b
-		bcc ._61_7a	; lowercase letters
-		cmp #$7f
-		bne .unsupported	; { | } ~
-		rts	; 7f is ignored
-
-; control characters, digits, punctuation
-._00_3f		cmp #13	; CR -> ignore
-		bne ++
-			rts
-++		cmp #10	; LF -> CR
-		bne ++
-			lda #13
-++		ldx #0
-		stx $f4	; make sure TABs are not quoted
-		+bit16
-.unsupported	lda #CHAR_UNSUPPORTED
-		+bit16
-._40		lda #$b0	; ampersand
-		+bit16
-._41_5a		ora #$80	; uppercase
-		+bit16
-._5e		lda #$bf	; ^
-		+bit16
-._61_7a		and #$df	; lowercase
-.keep		jmp sys_chrout
-
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ; converter for code points above 0x7f:
 out_sequence ; output code points in 0x80..0x1fffff range
@@ -180,78 +135,3 @@ out_sequence ; output code points in 0x80..0x1fffff range
 		bne .done
 .fail		lda #CHAR_UNSUPPORTED
 .done		jmp sys_chrout
-
-; CAUTION: all lists must be sorted in ascending order so search can stop early!
-
-.lists_base
-; start of four-byte code points:
-		!by $00, .node_00 - .lists_base
-		!by $ff	; end
-; start of three-byte code points:
-.node_00	!by $00, .node_0000 - .lists_base
-		!by $e2, .node_00e2 - .lists_base
-		!by $ff	; end
-; start of two-byte code points:
-.node_0000	!by $c2, .node_0000c2 - .base_4th
-		!by $c3, .node_0000c3 - .base_4th
-		!by $ce, .node_0000ce - .base_4th
-		!by $cf, .node_0000cf - .base_4th
-		!by $ff	; end
-.node_00e2	!by $86, .node_00e286 - .base_4th
-		!by $88, .node_00e288 - .base_4th
-		!by $94, .node_00e294 - .base_4th
-		!by $ff	; end
-
-.base_4th ; data for last byte of sequences (minimum value, max+1 value, offset in table)
-.node_0000c2	!by $a3, $a8, .£§ - .bigtable
-		!by $b4, $b6, .´µ - .bigtable
-		!by $ff	; end
-.node_0000c3	!by $84, $85, .Ä - .bigtable
-		!by $96, $97, .Ö - .bigtable
-		!by $9c, $af, .Üßàâäèéêî - .bigtable
-		!by $b4, $bd, .ôöùûü - .bigtable
-		!by $ff	; end
-.node_0000ce	!by $a3, $a4, .Σ - .bigtable
-		!by $ff	; end
-.node_0000cf	!by $80, $81, .π - .bigtable
-		!by $ff	; end
-.node_00e286	!by $91, $92, .↑ - .bigtable
-		!by $ff	; end
-.node_00e288	!by $9a, $9b, .√ - .bigtable
-		!by $ff	; end
-.node_00e294	!by $80, $83, .─│ - .bigtable
-		!by $8c, $9d, .┌┐└┘├ - .bigtable
-		!by $a4, $a5, .┤ - .bigtable
-		!by $ac, $ad, .┬ - .bigtable
-		!by $b4, $b5, .┴ - .bigtable
-		!by $bc, $bd, .┼ - .bigtable
-		!by $ff	; end
-
-.bigtable
-;len2:
-.£§		!h ad00000040
-.´µ		!h afb1
-.Ä		!h db
-.Ö		!h dc
-.Üßàâäèéêî	!h dd0000beb200b400bb000000aeacb5000000b6
-.ôöùûü		!h b700bc0000b300b8bd
-.Σ		!h ba
-.π		!h de
-;len3:
-.↑		!h 5e
-.√		!h b9
-.─│		!h a600a1
-.┌┐└┘├		!h a8000000aa000000a2000000a4000000a5
-.┤		!h a7
-.┬		!h a9
-.┴		!h a3
-.┼		!h ab
-
-; end of program, but we put variables after it:
-
-; number of continuation bytes to expect (ff/0/1/2/3, where $ff means infinity, i.e. error state)
-.expected_bytes
-; byte sequence
-.write_offset_minus_1	= .expected_bytes + 1
-; zero-padded on left! example: Euro sign would be $00, $e2, $82, $ac
-.byte_sequence		= .write_offset_minus_1 + 1	; four bytes!
