@@ -7,7 +7,7 @@
 	CHAR_CODING_ERROR	= '!'	; char to output in case of encoding error
 	CHAR_UNSUPPORTED	= 'X'	; char to output for unsupported code points
 !addr	sys_chrout		= $ffd2	; routine to output a character
-!addr	utf8_vars		= end_of_program
+	utf8_vars		= end_of_program
 
 ; first entry point: init / reset / clear error flag
 		jmp utf8_init
@@ -16,6 +16,7 @@
 
 	!src "utf8asm.a"
 
+; decoder will call this for ASCII code points:
 out_ascii_A ; output code points in 0x00..0x7f range
 		; 00..1f -> convert LF and CR
 		; 41..5a -> add 0x80
@@ -59,14 +60,14 @@ out_ascii_A ; output code points in 0x00..0x7f range
 ; CAUTION: all lists must be sorted in ascending order so search can stop early!
 
 .lists_base
-; start of four-byte code points:
+; list of supported values for 1st of four bytes:
 		!by $00, .node_00 - .lists_base
 		!by $ff	; end
-; start of three-byte code points:
+; list(s) of supported values for 2nd of four bytes:
 .node_00	!by $00, .node_0000 - .lists_base
 		!by $e2, .node_00e2 - .lists_base
 		!by $ff	; end
-; start of two-byte code points:
+; list(s) of supported values for 3rd of four bytes:
 .node_0000	!by $c2, .node_0000c2 - .base_4th
 		!by $c3, .node_0000c3 - .base_4th
 		!by $ce, .node_0000ce - .base_4th
@@ -77,7 +78,8 @@ out_ascii_A ; output code points in 0x00..0x7f range
 		!by $94, .node_00e294 - .base_4th
 		!by $ff	; end
 
-.base_4th ; data for last byte of sequences (minimum value, max+1 value, offset in table)
+; list(s) of supported ranges for 4th of four bytes:
+.base_4th ; (minimum value, max+1 value, offset in big table)
 .node_0000c2	!by $a3, $a8, .£§ - .bigtable
 		!by $b4, $b6, .´µ - .bigtable
 		!by $ff	; end
@@ -103,7 +105,7 @@ out_ascii_A ; output code points in 0x00..0x7f range
 		!by $ff	; end
 
 .bigtable
-;len2:
+; length 2 (00 00 xx xx):
 .£§		!h ad00000040
 .´µ		!h afb1
 .Ä		!h db
@@ -112,7 +114,7 @@ out_ascii_A ; output code points in 0x00..0x7f range
 .ôöùûü		!h b700bc0000b300b8bd
 .Σ		!h ba
 .π		!h de
-;len3:
+; length 3 (00 xx xx xx):
 .↑		!h 5e
 .√		!h b9
 .─│		!h a600a1

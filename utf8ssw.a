@@ -1,0 +1,128 @@
+;ACME 0.97
+
+	!to "utf8ssw.prg", cbm
+
+	CHAR_CODING_ERROR	= '!'	; char to output in case of encoding error
+	CHAR_UNSUPPORTED	= 'X'	; char to output for unsupported code points
+!addr	sys_chrout		= $ffb3	; routine to output a character
+!addr	utf8_vars		= $00	; put vars at start of zp
+
+	* = $1000
+		; TODO:
+		; for ARG in command_line_arguments {
+		;	FILE = open(ARG, "rb")
+		;	jsr utf8_init	; init (clear error flag)
+		;	for BYTE in FILE {
+		;		jsr utf8_decode_byte_A	; feed byte to decoder
+		;	}
+		;	close(FILE)
+		; }
+		;
+		jmp (address($da))	; return to shell
+
+	; include decoder
+	!src "utf8asm.a"
+
+; decoder will call this for ASCII code points:
+out_ascii_A ; output code points in 0x00..0x7f range
+;		FIXME - maybe suppress everything except 0x0a?
+		jmp sys_chrout
+
+; CAUTION: all lists must be sorted in ascending order so search can stop early!
+
+.lists_base
+; list of supported values for 1st of four bytes:
+		!by $00, .node_00 - .lists_base
+		!by $ff	; end
+; list(s) of supported values for 2nd of four bytes:
+.node_00	!by $00, .node_0000 - .lists_base
+		!by $e2, .node_00e2 - .lists_base
+		!by $ff	; end
+; list(s) of supported values for 3rd of four bytes:
+.node_0000	!by $c2, .node_0000c2 - .base_4th
+		!by $c3, .node_0000c3 - .base_4th
+		!by $c6, .node_0000c6 - .base_4th
+		!by $ce, .node_0000ce - .base_4th
+		!by $cf, .node_0000cf - .base_4th
+		!by $ff	; end
+.node_00e2	!by $81, .node_00e281 - .base_4th
+		!by $82, .node_00e282 - .base_4th
+		!by $88, .node_00e288 - .base_4th
+		!by $89, .node_00e289 - .base_4th
+		!by $8c, .node_00e28c - .base_4th
+		!by $94, .node_00e294 - .base_4th
+		!by $95, .node_00e295 - .base_4th
+		!by $96, .node_00e296 - .base_4th
+		!by $ff	; end
+
+; list(s) of supported ranges for 4th of four bytes:
+.base_4th ; (minimum value, max+1 value, offset in big table)
+.node_0000c2	!by $a1, $c0, .c2a1 - .bigtable
+		!by $ff	; end
+.node_0000c3	!by $84, $8a, .c384 - .bigtable
+		!by $91, $97, .c391 - .bigtable
+		!by $9c, $c0, .c39c - .bigtable
+		!by $ff	; end
+.node_0000c6	!by $92, $93, .c692 - .bigtable
+		!by $ff	; end
+.node_0000ce	!by $93, $99, .ce93 - .bigtable
+		!by $a3, $aa, .cea3 - .bigtable
+		!by $b1, $b6, .ceb1 - .bigtable
+		!by $ff	; end
+.node_0000cf	!by $80, $87, .cf80 - .bigtable
+		!by $ff	; end
+.node_00e281	!by $bf, $c0, .e281bf - .bigtable
+		!by $ff	; end
+.node_00e282	!by $a7, $a8, .e282a7 - .bigtable
+		!by $ff	; end
+.node_00e288	!by $99, $9f, .e28899 - .bigtable
+		!by $a9, $aa, .e288a9 - .bigtable
+		!by $ff	; end
+.node_00e289	!by $88, $89, .e28988 - .bigtable
+		!by $a1, $a6, .e289a1 - .bigtable
+		!by $ff	; end
+.node_00e28c	!by $90, $91, .e28c90 - .bigtable
+		!by $a0, $a2, .e28ca0 - .bigtable
+		!by $ff	; end
+.node_00e294	!by $80, $83, .e29480 - .bigtable
+		!by $8c, $9d, .e2948c - .bigtable
+		!by $a4, $a5, .e294a4 - .bigtable
+		!by $ac, $ad, .e294ac - .bigtable
+		!by $b4, $b5, .e294b4 - .bigtable
+		!by $bc, $bd, .e294bc - .bigtable
+		!by $ff	; end
+.node_00e295	!by $90, $ad, .e29590 - .bigtable
+		!by $ff	; end
+.node_00e296	!by $80, $94, .e29680 - .bigtable
+		!by $a0, $a1, .e296a0 - .bigtable
+		!by $ff	; end
+
+.bigtable
+; length 2 (00 00 xx xx):
+.c2a1	!h ad9b9c009d00000000a6aeaa000000f8f1fd0000e600fa0000a7afacab00a8
+.c384	!h 8e8f92800090
+.c391	!h a50000000099
+.c39c	!h 9a0000e185a08300848691878a8288898da18c8b00a495a2930094f60097a39681000098
+.c692	!h 9f
+.ce93	!h e200000000e9
+.cea3	!h e40000e80000ea
+.ceb1	!h e00000ebee
+.cf80	!h e30000e5e700ed
+; length 3 (00 xx xx xx):
+.e281bf	!h fc
+.e282a7	!h 9e
+.e28899	!h f9fb000000ec
+.e288a9	!h ef
+.e28988	!h f7
+.e289a1	!h f00000f3f2
+.e28c90	!h a9
+.e28ca0	!h f4f5
+.e29480	!h c400b3
+.e2948c	!h da000000bf000000c0000000d9000000c3
+.e294a4	!h b4
+.e294ac	!h c2
+.e294b4	!h c1
+.e294bc	!h c5
+.e29590	!h cdbad5d6c9b8b7bbd4d3c8bebdbcc6c7ccb5b6b9d1d2cbcfd0cad8d7ce
+.e29680	!h df000000dc000000db000000dd000000deb0b1b2
+.e296a0	!h fe
