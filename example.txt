@@ -2,21 +2,14 @@ ascii:
 0x00..1f	(control characters)
 0x20..3f  !"#$%&'()*+,-./0123456789:;<=>?
 0x40..5f @ABCDEFGHIJKLMNOPQRSTUVWXYZ[\]^_
-0x60..7f `abcdefghijklmnopqrstuvwxyz{|}~	0x7f (DEL) is ignored
+0x60..7f `abcdefghijklmnopqrstuvwxyz{|}~#	0x7f is DEL -> ignore
+iso 8859-1:
+0xa0..bf #¡¢£¤¥¦§¨©ª«¬#®¯°±²³´µ¶·¸¹º»¼½¾¿	0xa0 is NBSP, 0xad is SHY
+0xc0..df ÀÁÂÃÄÅÆÇÈÉÊËÌÍÎÏÐÑÒÓÔÕÖ×ØÙÚÛÜÝÞß
+0xe0..ff àáâãäåæçèéêëìíîïðñòóôõö÷øùúûüýþÿ
 
-petscii:
-0x00..1f	(control characters)
-0x20..3f  !"#$%&'()*+,-./0123456789:;<=>?
-0x40..5f @abcdefghijklmnopqrstuvwxyz[£]↑←
-0x80..9f	(control characters)
-0xa0..bf  ##########├#└┐#┌┴┬┤#########┘##	hashes are graphics
-0xc0..df ─ABCDEFGHIJKLMNOPQRSTUVWXYZ┼#│##	hashes are graphics
-
-c64 screencode, lower/upper case:
-0x00..1f @abcdefghijklmnopqrstuvwxyz[£]↑←
-0x20..3f  !"#$%&'()*+,-./0123456789:;<=>?
-0x40..5f ─ABCDEFGHIJKLMNOPQRSTUVWXYZ┼#│##	hashes are graphics
-0x60..7f  ##########├#└┐#┌┴┬┤#########┘##	hashes are graphics
+iso 8859-15:
+0xa0..bf #¡¢£€¥Š§š©ª«¬#®¯°±²³Žµ¶·ž¹º»ŒœŸ¿	0xa0 is NBSP, 0xad is SHY
 
 dos codepage 437:
 0x00..1f  ☺☻♥♦♣♠•◘○◙♂♀♪♫☼►◄↕‼¶§▬↨↑↓→←∟↔▲▼
@@ -28,13 +21,21 @@ dos codepage 437:
 0xc0..df └┴┬├─┼╞╟╚╔╩╦╠═╬╧╨╤╥╙╘╒╓╫╪┘┌█▄▌▐▀
 0xe0..ff αßΓπΣσµτΦΘΩδ∞φε∩≡±≥≤⌠⌡÷≈°∙·√ⁿ²■ 	0xff is NBSP
 
-iso 8859-1 (0xa0 is NBSP, 0xad is SHY):
-0xa0..bf #¡¢£¤¥¦§¨©ª«¬#®¯°±²³´µ¶·¸¹º»¼½¾¿	ISO 8859-1
-0xa0..bf #¡¢£€¥Š§š©ª«¬#®¯°±²³Žµ¶·ž¹º»ŒœŸ¿	ISO 8859-15
-0xc0..df ÀÁÂÃÄÅÆÇÈÉÊËÌÍÎÏÐÑÒÓÔÕÖ×ØÙÚÛÜÝÞß
-0xe0..ff àáâãäåæçèéêëìíîïðñòóôõö÷øùúûüýþÿ
+c64 screencode, lower/upper case:
+0x00..1f @abcdefghijklmnopqrstuvwxyz[£]↑←
+0x20..3f  !"#$%&'()*+,-./0123456789:;<=>?
+0x40..5f ─ABCDEFGHIJKLMNOPQRSTUVWXYZ┼⡇│▒▧
+0x60..7f  ▌▄▔▁▏▒▕⣤▨#├▗└┐▂┌┴┬┤▎▍###▃✓▖▝┘▘▚	hash -> no unicode equivalent
 
-"C128 DIN" petscii:
+c64 petscii, lower/upper case:
+0x00..1f	(control characters)
+0x20..3f  !"#$%&'()*+,-./0123456789:;<=>?
+0x40..5f @abcdefghijklmnopqrstuvwxyz[£]↑←
+0x80..9f	(control characters)
+0xa0..bf  ▌▄▔▁▏▒▕⣤▨#├▗└┐▂┌┴┬┤▎▍###▃✓▖▝┘▘▚	hash -> no unicode equivalent
+0xc0..df ─ABCDEFGHIJKLMNOPQRSTUVWXYZ┼⡇│▒▧
+
+c128 "DIN" petscii, lower/upper case:
 0x00..1f	(control characters)
 0x20..3f  !"#$%&'()*+,-./0123456789:;<=>?
 0x40..5f §abcdefghijklmnopqrstuvwxyz[\]↑_
